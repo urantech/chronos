@@ -56,7 +56,6 @@ func TestStartJob_Success(t *testing.T) {
 	mockStorage.On("Lock", mock.Anything, jobName).Return(nil)
 	mockStorage.On("Unlock", mock.Anything, jobName).Return(nil)
 	mockHandler.On("RunCron", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	
 
 	engine := NewEngine(mockStorage)
 	engine.Register(jobName, mockHandler)
