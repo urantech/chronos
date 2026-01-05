@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -32,7 +33,7 @@ func (m *MockStorage) Unlock(ctx context.Context, name string) error {
 }
 
 func (m *MockStorage) SaveCursor(ctx context.Context, name string, ts *timestamppb.Timestamp) error {
-	args := m.Called(ctx, name)
+	args := m.Called(ctx, name, ts)
 	return args.Error(0)
 }
 
@@ -45,8 +46,8 @@ func (m *MockStorage) GetCursor(ctx context.Context, name string) (*timestamppb.
 }
 
 func (h *MockHandler) RunCron(ctx context.Context, args *pb.JobArgs, results chan<- *pb.JobProgress) error {
-	mockArgs := h.Called(ctx, args, results)
-	return mockArgs.Error(0)
+	argsCalled := h.Called(ctx, args, results)
+	return argsCalled.Error(0)
 }
 
 func TestStartJob_Success(t *testing.T) {
@@ -60,7 +61,16 @@ func TestStartJob_Success(t *testing.T) {
 
 	lastCheckpoint := timestamppb.Now()
 	mockStorage.On("GetCursor", mock.Anything, jobName).Return(lastCheckpoint, nil)
-	mockHandler.On("RunCron", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mockStorage.On("SaveCursor", mock.Anything, jobName, mock.Anything).Return(nil)
+
+	mockHandler.On("RunCron", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		results := args.Get(2).(chan<- *pb.JobProgress)
+
+		results <- &pb.JobProgress{
+			Status:            pb.JobStatus_JOB_STATUS_SUCCESS,
+			CurrentCheckpoint: timestamppb.Now(),
+		}
+	}).Return(nil)
 
 	engine := NewEngine(mockStorage)
 	engine.Register(jobName, mockHandler)
@@ -70,7 +80,21 @@ func TestStartJob_Success(t *testing.T) {
 
 	// Assert
 	assert.NoError(t, err)
-	assert.Equal(t, 0, len(errs))
+	time.Sleep(50 * time.Millisecond)
+
+	select {
+	case err := <-errs:
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	default:
+	}
+
+	_, ok := <-errs
+	assert.False(t, ok, "error channel should be closed")
+
+	mockStorage.AssertExpectations(t)
+	mockHandler.AssertExpectations(t)
 }
 
 func TestStartJob_ClientError(t *testing.T) {
@@ -110,4 +134,7 @@ func TestStartJob_ClientError(t *testing.T) {
 
 	_, ok = <-errs
 	assert.False(t, ok, "Channel should be closed after sending error")
+
+	mockStorage.AssertExpectations(t)
+	mockHandler.AssertExpectations(t)
 }
