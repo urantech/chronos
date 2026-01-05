@@ -43,7 +43,11 @@ func (e *Engine) StartJob(ctx context.Context, name string) (<-chan error, error
 		}
 		defer e.storage.Unlock(ctx, name)
 
-		lastCheckpoint := e.storage.GetCursor(ctx, name)
+		lastCheckpoint, err := e.storage.GetCursor(ctx, name)
+		if err != nil {
+			log.Printf("failed to get cursor %s: %v", name, err)
+			return
+		}
 
 		results := make(chan *pb.JobProgress)
 
