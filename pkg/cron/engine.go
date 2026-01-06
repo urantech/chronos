@@ -41,7 +41,7 @@ func (e *Engine) StartJob(ctx context.Context, name string) (<-chan error, error
 			log.Printf("failed to lock job %s: %v", name, err)
 			return
 		}
-		defer e.storage.Unlock(ctx, name)
+		defer e.storage.Unlock(context.Background(), name)
 
 		lastCheckpoint, err := e.storage.GetCursor(ctx, name)
 		if err != nil {
@@ -64,20 +64,22 @@ func (e *Engine) StartJob(ctx context.Context, name string) (<-chan error, error
 			}
 		})
 
-		for progress := range results {
-			if progress.GetError() != "" {
-				errs <- fmt.Errorf("job logic error: %s", progress.GetError())
+		for {
+			select {
+			case <-ctx.Done():
 				return
-			}
-
-			if progress.CurrentCheckpoint != nil {
-				if err := e.storage.SaveCursor(ctx, name, progress.CurrentCheckpoint); err != nil {
-					log.Printf("failed to save checkpoint %s: %v", name, err)
+			case progress, ok := <-results:
+				if !ok {
+					return
 				}
-			}
 
-			if progress.GetStatus() == pb.JobStatus_JOB_STATUS_SUCCESS {
-				break
+				if progress.CurrentCheckpoint != nil {
+					e.storage.SaveCursor(context.Background(), name, progress.CurrentCheckpoint)
+				}
+
+				if progress.GetStatus() == pb.JobStatus_JOB_STATUS_SUCCESS {
+					return
+				}
 			}
 		}
 	})
